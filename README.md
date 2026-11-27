@@ -76,6 +76,17 @@ docker compose up -d
 
 Open `http://localhost:3000`. Configure `NEXT_PUBLIC_SIGNALING_URL` when deploying behind a reverse proxy or custom domain with TLS (`wss://`).
 
+### Deploying to Vercel (Hybrid Setup)
+
+Vercel runs the Next.js frontend, while `server/signaling.ts` requires a persistent Node.js/WebSocket host (such as Railway, Render, Fly.io, or a VPS):
+
+1. Deploy the signaling broker using `Dockerfile.signaling` or `npm run start:ws` on Node.js 22+.
+2. In your Vercel project **Environment Variables**, set:
+   ```env
+   NEXT_PUBLIC_SIGNALING_URL=wss://your-signaling-host.example.com
+   ```
+3. Deploy the Next.js app to Vercel (`npm run build`).
+
 ## Project Structure
 
 ```text
