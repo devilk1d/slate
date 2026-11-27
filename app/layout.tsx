@@ -13,7 +13,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Slate — P2P File Transfer & Ephemeral Scratchpad",
+  title: "Slate",
   description:
     "Zero-database, DTLS-encrypted WebRTC file transfer and live ephemeral scratchpad with OPFS disk streaming.",
 };
