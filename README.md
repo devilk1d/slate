@@ -78,13 +78,21 @@ Open `http://localhost:3000`. Configure `NEXT_PUBLIC_SIGNALING_URL` when deployi
 
 ### Deploying to Vercel (Hybrid Setup)
 
-Vercel runs the Next.js frontend, while `server/signaling.ts` requires a persistent Node.js/WebSocket host (such as Railway, Render, Fly.io, or a VPS):
+Vercel runs the Next.js frontend, while signaling requires a persistent WebSocket host:
+
+**Option A — Cloudflare Workers (Free Tier, No Credit Card, Zero Sleep):**
+
+```bash
+npx wrangler login
+npx wrangler deploy --config workers/wrangler.jsonc
+```
+
+Copy the deployed `wss://slate-signaling.<your-subdomain>.workers.dev` URL into Vercel's `NEXT_PUBLIC_SIGNALING_URL` environment variable and deploy.
+
+**Option B — Docker Host (VPS / Fly.io):**
 
 1. Deploy the signaling broker using `Dockerfile.signaling` or `npm run start:ws` on Node.js 22+.
-2. In your Vercel project **Environment Variables**, set:
-   ```env
-   NEXT_PUBLIC_SIGNALING_URL=wss://your-signaling-host.example.com
-   ```
+2. In your Vercel project **Environment Variables**, set `NEXT_PUBLIC_SIGNALING_URL=wss://your-signaling-host.example.com`.
 3. Deploy the Next.js app to Vercel (`npm run build`).
 
 ## Project Structure
