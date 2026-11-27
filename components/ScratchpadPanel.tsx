@@ -60,12 +60,12 @@ export function ScratchpadPanel({
   return (
     <section className="flex flex-col border border-[#E5E5E5] rounded-sm bg-white min-h-[24rem]">
       <div className="flex items-center justify-between gap-2 border-b border-[#E5E5E5] px-4 py-3">
-        <div className="flex items-center gap-2">
-          <Terminal className="h-4 w-4 text-[#0A0A0A]" aria-hidden="true" />
-          <h2 className="text-sm font-semibold tracking-tight text-[#0A0A0A]">
+        <div className="flex items-center gap-2 min-w-0">
+          <Terminal className="h-4 w-4 shrink-0 text-[#0A0A0A]" aria-hidden="true" />
+          <h2 className="truncate text-sm font-semibold tracking-tight text-[#0A0A0A]">
             Live Scratchpad
           </h2>
-          <span className="font-mono text-xs tabular-nums text-[#525252]">
+          <span className="shrink-0 font-mono text-xs tabular-nums text-[#525252]">
             ({entries.length})
           </span>
         </div>
@@ -75,9 +75,13 @@ export function ScratchpadPanel({
           size="sm"
           onClick={onClearSession}
           disabled={entries.length === 0}
+          aria-label="Clear scratchpad session"
+          className="shrink-0 whitespace-nowrap"
         >
           <Eraser className="h-3.5 w-3.5" aria-hidden="true" />
-          Clear Session
+          <span>
+            Clear<span className="hidden sm:inline"> Session</span>
+          </span>
         </Button>
       </div>
 

@@ -141,7 +141,7 @@ export function IceSettingsModal({
                 className="w-full rounded-sm border border-[#E5E5E5] bg-white px-3 py-1.5 font-mono text-xs text-[#0A0A0A] placeholder:text-[#737373]"
               />
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <div>
                 <label
                   htmlFor="ice-username"

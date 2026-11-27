@@ -64,6 +64,7 @@ export interface UseFileTransferResult {
   resumeTransfer: (fileId: string) => void;
   cancelTransfer: (fileId: string) => void;
   downloadTransfer: (fileId: string) => void;
+  downloadTransfers: (fileIds: string[]) => Promise<void>;
   clearFinished: () => void;
 }
 
@@ -621,6 +622,17 @@ export function useFileTransfer(
     fileStorage.triggerBrowserDownload(ctx.readyBlob, ctx.meta.name);
   }, []);
 
+  const downloadTransfers = useCallback(async (fileIds: string[]) => {
+    for (let i = 0; i < fileIds.length; i++) {
+      const ctx = incomingRef.current.get(fileIds[i]);
+      if (!ctx?.readyBlob) continue;
+      fileStorage.triggerBrowserDownload(ctx.readyBlob, ctx.meta.name);
+      if (i < fileIds.length - 1) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 160));
+      }
+    }
+  }, []);
+
   const clearFinished = useCallback(() => {
     for (const [id, ctx] of outgoingRef.current.entries()) {
       if (ctx.meta.status === "completed" || ctx.meta.status === "cancelled") {
@@ -651,6 +663,7 @@ export function useFileTransfer(
     resumeTransfer,
     cancelTransfer,
     downloadTransfer,
+    downloadTransfers,
     clearFinished,
   };
 }

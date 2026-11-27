@@ -101,13 +101,13 @@ export function PairingModal({
           </div>
 
           {roomCode && qrMatrix ? (
-            <div className="flex flex-col sm:flex-row items-center gap-4 rounded-sm border border-[#E5E5E5] bg-[#FAFAFA] p-4">
+            <div className="flex flex-col sm:flex-row items-center gap-3 sm:gap-4 rounded-sm border border-[#E5E5E5] bg-[#FAFAFA] p-3 sm:p-4">
               <div className="shrink-0 rounded-sm border border-[#E5E5E5] bg-white p-2">
                 <svg
                   role="img"
                   aria-label={`QR code to join room ${roomCode}`}
                   viewBox={`-2 -2 ${qrMatrix.size + 4} ${qrMatrix.size + 4}`}
-                  className="h-36 w-36 block"
+                  className="h-28 w-28 sm:h-36 sm:w-36 block"
                   shapeRendering="crispEdges"
                 >
                   <rect
@@ -121,10 +121,10 @@ export function PairingModal({
                 </svg>
               </div>
 
-              <div className="flex-1 min-w-0 space-y-3 text-center sm:text-left">
+              <div className="flex-1 min-w-0 w-full space-y-2.5 text-center sm:text-left">
                 <div>
                   <div className="text-xs text-[#525252]">Room Code</div>
-                  <div className="mt-0.5 font-mono text-2xl font-semibold tracking-wider tabular-nums text-[#0A0A0A]">
+                  <div className="mt-0.5 font-mono text-xl sm:text-2xl font-semibold tracking-wider tabular-nums text-[#0A0A0A]">
                     {roomCode}
                   </div>
                 </div>
@@ -132,17 +132,17 @@ export function PairingModal({
                   <CopyButton
                     text={joinUrl}
                     ariaLabel="Copy direct invite link"
-                    label="Copy Invite URL"
-                    size="md"
+                    label="Invite URL"
+                    size="sm"
                   />
                   <CopyButton
                     text={normalizeRoomCode(roomCode)}
                     ariaLabel="Copy 6-digit room code"
-                    label="Copy Code"
-                    size="md"
+                    label="Code"
+                    size="sm"
                   />
                 </div>
-                <p className="font-mono text-[11px] text-[#525252] break-all">
+                <p className="font-mono text-[11px] text-[#525252] truncate">
                   {joinUrl}
                 </p>
               </div>

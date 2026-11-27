@@ -103,7 +103,7 @@ export function DropzonePanel({
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
           className={cn(
-            "flex-1 min-h-64 flex flex-col items-center justify-center gap-4 rounded-sm border border-dashed px-6 py-8 text-center transition-colors duration-150",
+            "flex-1 min-h-48 sm:min-h-64 flex flex-col items-center justify-center gap-4 rounded-sm border border-dashed px-4 sm:px-6 py-6 sm:py-8 text-center transition-colors duration-150",
             isDragging
               ? "border-[#0A0A0A] bg-[#F5F5F5]"
               : "border-[#D4D4D4] bg-[#FAFAFA]"
