@@ -3,24 +3,34 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "concurrently -k -n next,ws -c white,gray \"next dev\" \"node server/signaling.ts\"",
+    "dev:next": "next dev",
+    "dev:ws": "node server/signaling.ts",
     "build": "next build",
     "start": "next start",
+    "start:ws": "node server/signaling.ts",
     "lint": "eslint"
   },
   "dependencies": {
+    "lucide-react": "^1.82.0",
     "next": "16.4.6",
+    "qrcode": "^1.5.4",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "ws": "^8.23.0"
   },
   "devDependencies": {
     "@tailwindcss/turbopack": "4.3.3",
     "@types/node": "^20",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/ws": "^8.18.2",
+    "concurrently": "^10.0.7",
     "eslint": "^9",
     "eslint-config-next": "16.4.6",
     "tailwindcss": "4.3.3",
+    "tsx": "^4.23.15",
     "typescript": "^5"
   }
 }
