@@ -43,6 +43,7 @@ export class PeerSessionManager {
   private remotePeer: PeerDescriptor | null = null;
   private state: PeerConnectionState = "idle";
   private manualDisconnect = false;
+  private destroyed = false;
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -117,11 +118,7 @@ export class PeerSessionManager {
     this.manualDisconnect = true;
     this.clearTimers();
     this.teardownPeerConnection();
-    if (this.ws) {
-      this.ws.onclose = null;
-      this.ws.close(1000, "User disconnected");
-      this.ws = null;
-    }
+    this.closeSocket("User disconnected");
     this.roomCode = null;
     this.remotePeer = null;
     this.callbacks.onRoomChange(null);
@@ -130,14 +127,21 @@ export class PeerSessionManager {
   }
 
   public destroy(): void {
+    this.destroyed = true;
     this.manualDisconnect = true;
     this.clearTimers();
     this.teardownPeerConnection();
-    if (this.ws) {
-      this.ws.onclose = null;
-      this.ws.close();
-      this.ws = null;
-    }
+    this.closeSocket();
+  }
+
+  private closeSocket(reason?: string): void {
+    if (!this.ws) return;
+    this.ws.onopen = null;
+    this.ws.onmessage = null;
+    this.ws.onerror = null;
+    this.ws.onclose = null;
+    this.ws.close(1000, reason);
+    this.ws = null;
   }
 
   public sendControl(message: ControlMessage): boolean {
@@ -195,37 +199,41 @@ export class PeerSessionManager {
   }
 
   private openSocketAndSend(initialMessage: ClientSignalMessage): void {
+    if (this.destroyed) return;
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.sendSignal(initialMessage);
       return;
     }
 
-    if (this.ws) {
-      this.ws.onclose = null;
-      this.ws.close();
-      this.ws = null;
-    }
+    this.closeSocket();
 
-    const socket = new WebSocket(resolveSignalingUrl());
+    const signalingUrl = resolveSignalingUrl();
+    const socket = new WebSocket(signalingUrl);
     this.ws = socket;
 
     socket.onopen = () => {
+      if (this.destroyed || this.ws !== socket) return;
       this.reconnectAttempts = 0;
       this.startHeartbeat();
       this.sendSignal(initialMessage);
     };
 
     socket.onmessage = (event) => {
+      if (this.destroyed || this.ws !== socket) return;
       this.handleSignalMessage(event.data);
     };
 
     socket.onerror = () => {
-      if (this.state === "idle") {
-        this.callbacks.onError("Unable to reach signaling server.");
+      if (this.destroyed || this.ws !== socket) return;
+      if (!this.roomCode) {
+        this.callbacks.onError(
+          `Unable to reach signaling server (${signalingUrl}). Run "npm run dev" or "npm run dev:ws".`
+        );
       }
     };
 
     socket.onclose = () => {
+      if (this.destroyed || this.ws !== socket) return;
       this.stopHeartbeat();
       if (this.manualDisconnect) return;
       if (this.roomCode) {
