@@ -94,6 +94,7 @@ export function SlateWorkspace() {
           onPause={transfer.pauseTransfer}
           onResume={transfer.resumeTransfer}
           onCancel={transfer.cancelTransfer}
+          onDownload={transfer.downloadTransfer}
           onClearFinished={transfer.clearFinished}
         />
       </main>

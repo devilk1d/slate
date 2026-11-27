@@ -151,7 +151,8 @@ export function SessionHeader({
               <CopyButton
                 text={roomCode.replace(/-/g, "")}
                 ariaLabel={`Copy room code ${roomCode}`}
-                className="border-0 bg-transparent hover:bg-white min-h-6 min-w-6 px-1"
+                variant="ghost"
+                className="min-h-6 min-w-6 px-1"
               />
             </div>
           )}

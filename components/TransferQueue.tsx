@@ -3,6 +3,7 @@
 import {
   ArrowDownLeft,
   ArrowUpRight,
+  Download,
   Pause,
   Play,
   Trash2,
@@ -19,6 +20,7 @@ export interface TransferQueueProps {
   onPause: (fileId: string) => void;
   onResume: (fileId: string) => void;
   onCancel: (fileId: string) => void;
+  onDownload: (fileId: string) => void;
   onClearFinished: () => void;
 }
 
@@ -39,6 +41,7 @@ export function TransferQueue({
   onPause,
   onResume,
   onCancel,
+  onDownload,
   onClearFinished,
 }: TransferQueueProps) {
   const hasFinished = transfers.some(
@@ -125,6 +128,18 @@ export function TransferQueue({
                     <span className="w-10 text-right font-mono text-xs tabular-nums text-[#0A0A0A]">
                       {pct}%
                     </span>
+
+                    {item.direction === "incoming" && item.status === "completed" && (
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        aria-label={`Download ${item.name}`}
+                        onClick={() => onDownload(item.fileId)}
+                      >
+                        <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                        Download
+                      </Button>
+                    )}
 
                     {canControl && (
                       <div className="flex items-center gap-1">

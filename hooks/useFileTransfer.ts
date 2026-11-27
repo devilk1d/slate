@@ -52,6 +52,7 @@ interface IncomingContext {
   paused: boolean;
   cancelled: boolean;
   finalized: boolean;
+  readyBlob?: Blob;
 }
 
 export interface UseFileTransferResult {
@@ -62,6 +63,7 @@ export interface UseFileTransferResult {
   pauseTransfer: (fileId: string) => void;
   resumeTransfer: (fileId: string) => void;
   cancelTransfer: (fileId: string) => void;
+  downloadTransfer: (fileId: string) => void;
   clearFinished: () => void;
 }
 
@@ -75,7 +77,16 @@ export function useFileTransfer(
   const outgoingRef = useRef<Map<string, OutgoingContext>>(new Map());
   const incomingRef = useRef<Map<string, IncomingContext>>(new Map());
   const rateTrackerRef = useRef<
-    Map<string, { lastTime: number; lastBytes: number; emaSpeed: number }>
+    Map<
+      string,
+      {
+        startTime: number;
+        startBytes: number;
+        lastTime: number;
+        lastBytes: number;
+        emaSpeed: number;
+      }
+    >
   >(new Map());
 
   const {
@@ -98,35 +109,58 @@ export function useFileTransfer(
     setTransfers(all);
   }, []);
 
+  const resetRateTracker = useCallback((fileId: string, baselineBytes: number) => {
+    const now = performance.now();
+    rateTrackerRef.current.set(fileId, {
+      startTime: now,
+      startBytes: baselineBytes,
+      lastTime: now,
+      lastBytes: baselineBytes,
+      emaSpeed: 0,
+    });
+  }, []);
+
   const updateThroughput = useCallback((fileId: string, bytesNow: number, totalSize: number) => {
     const now = performance.now();
-    const tracker = rateTrackerRef.current.get(fileId) ?? {
-      lastTime: now,
-      lastBytes: bytesNow,
-      emaSpeed: 0,
-    };
+    let tracker = rateTrackerRef.current.get(fileId);
 
-    const elapsedSec = (now - tracker.lastTime) / 1000;
-    if (elapsedSec >= 0.25) {
+    if (!tracker) {
+      tracker = {
+        startTime: now,
+        startBytes: 0,
+        lastTime: now,
+        lastBytes: 0,
+        emaSpeed: 0,
+      };
+      rateTrackerRef.current.set(fileId, tracker);
+    }
+
+    const windowSec = (now - tracker.lastTime) / 1000;
+    const totalSec = Math.max(0.01, (now - tracker.startTime) / 1000);
+
+    if (windowSec >= 0.2) {
       const deltaBytes = Math.max(0, bytesNow - tracker.lastBytes);
-      const instant = deltaBytes / elapsedSec;
+      const instant = deltaBytes / windowSec;
       const ema =
         tracker.emaSpeed === 0 ? instant : tracker.emaSpeed * 0.65 + instant * 0.35;
-      rateTrackerRef.current.set(fileId, {
+      tracker = {
+        ...tracker,
         lastTime: now,
         lastBytes: bytesNow,
         emaSpeed: ema,
-      });
-      const remaining = Math.max(0, totalSize - bytesNow);
-      const eta = ema > 0 ? remaining / ema : -1;
-      return { speed: ema, eta };
+      };
+      rateTrackerRef.current.set(fileId, tracker);
     }
 
+    // Use cumulative speed before the first 200ms EMA window completes so fast transfers show ETA immediately.
+    const effectiveSpeed =
+      tracker.emaSpeed > 0
+        ? tracker.emaSpeed
+        : Math.max(0, bytesNow - tracker.startBytes) / totalSec;
     const remaining = Math.max(0, totalSize - bytesNow);
-    return {
-      speed: tracker.emaSpeed,
-      eta: tracker.emaSpeed > 0 ? remaining / tracker.emaSpeed : -1,
-    };
+    const eta = effectiveSpeed > 0 ? remaining / effectiveSpeed : -1;
+
+    return { speed: effectiveSpeed, eta };
   }, []);
 
   const streamOutgoingChunks = useCallback(
@@ -136,6 +170,7 @@ export function useFileTransfer(
 
       ctx.sending = true;
       ctx.meta.status = "transferring";
+      resetRateTracker(fileId, ctx.receivedChunks.size * CHUNK_SIZE);
       syncStateList();
 
       try {
@@ -172,7 +207,7 @@ export function useFileTransfer(
           ctx.meta.speedBytesPerSec = metrics.speed;
           ctx.meta.etaSeconds = metrics.eta;
 
-          if (idx % 4 === 0 || idx === total - 1) {
+          if (idx === 0 || idx % 4 === 0 || idx === total - 1) {
             syncStateList();
           }
         }
@@ -199,7 +234,7 @@ export function useFileTransfer(
         ctx.sending = false;
       }
     },
-    [sendBinaryChunk, sendControl, syncStateList, updateThroughput]
+    [resetRateTracker, sendBinaryChunk, sendControl, syncStateList, updateThroughput]
   );
 
   const finalizeIncoming = useCallback(
@@ -208,12 +243,12 @@ export function useFileTransfer(
       ctx.finalized = true;
 
       try {
-        await fileStorage.finalizeAndDownload(
+        const readyBlob = await fileStorage.finalizeIncomingFile(
           ctx.meta.fileId,
-          ctx.meta.name,
           ctx.meta.totalChunks,
           ctx.meta.mimeType
         );
+        ctx.readyBlob = readyBlob;
         ctx.meta.status = "completed";
         ctx.meta.completedChunks = ctx.meta.totalChunks;
         ctx.meta.transferredBytes = ctx.meta.size;
@@ -223,7 +258,7 @@ export function useFileTransfer(
         ctx.finalized = false;
         ctx.meta.status = "error";
         ctx.meta.errorMessage =
-          err instanceof Error ? err.message : "Failed to save received file.";
+          err instanceof Error ? err.message : "Failed to prepare received file.";
       }
       syncStateList();
     },
@@ -272,6 +307,7 @@ export function useFileTransfer(
             };
 
             incomingRef.current.set(message.fileId, ctx);
+            resetRateTracker(message.fileId, bytesReceived);
             syncStateList();
             sendControl({
               type: "file:accept",
@@ -377,6 +413,7 @@ export function useFileTransfer(
     });
   }, [
     finalizeIncoming,
+    resetRateTracker,
     sendControl,
     streamOutgoingChunks,
     subscribeControl,
@@ -409,7 +446,7 @@ export function useFileTransfer(
 
           if (ctx.receivedChunks.size >= ctx.meta.totalChunks) {
             void finalizeIncoming(ctx);
-          } else if (frame.chunkIndex % 4 === 0) {
+          } else if (ctx.receivedChunks.size === 1 || frame.chunkIndex % 4 === 0) {
             syncStateList();
           }
         })
@@ -578,15 +615,24 @@ export function useFileTransfer(
     [sendControl, syncStateList]
   );
 
+  const downloadTransfer = useCallback((fileId: string) => {
+    const ctx = incomingRef.current.get(fileId);
+    if (!ctx?.readyBlob) return;
+    fileStorage.triggerBrowserDownload(ctx.readyBlob, ctx.meta.name);
+  }, []);
+
   const clearFinished = useCallback(() => {
     for (const [id, ctx] of outgoingRef.current.entries()) {
       if (ctx.meta.status === "completed" || ctx.meta.status === "cancelled") {
         outgoingRef.current.delete(id);
+        rateTrackerRef.current.delete(id);
       }
     }
     for (const [id, ctx] of incomingRef.current.entries()) {
       if (ctx.meta.status === "completed" || ctx.meta.status === "cancelled") {
+        void fileStorage.purgeTransfer(id, ctx.meta.totalChunks);
         incomingRef.current.delete(id);
+        rateTrackerRef.current.delete(id);
       }
     }
     syncStateList();
@@ -604,6 +650,7 @@ export function useFileTransfer(
     pauseTransfer,
     resumeTransfer,
     cancelTransfer,
+    downloadTransfer,
     clearFinished,
   };
 }

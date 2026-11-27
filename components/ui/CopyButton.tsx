@@ -8,6 +8,7 @@ export interface CopyButtonProps {
   text: string;
   ariaLabel: string;
   label?: string;
+  variant?: "default" | "ghost";
   className?: string;
   size?: "sm" | "md";
 }
@@ -34,6 +35,7 @@ export function CopyButton({
   text,
   ariaLabel,
   label,
+  variant = "default",
   className,
   size = "sm",
 }: CopyButtonProps) {
@@ -87,10 +89,15 @@ export function CopyButton({
         data-copied={status === "copied" ? "" : undefined}
         data-failed={status === "failed" ? "" : undefined}
         className={cn(
-          "inline-flex items-center justify-center gap-1.5 rounded-sm border border-[#E5E5E5] bg-white text-[#0A0A0A] transition-colors duration-150 hover:border-[#0A0A0A] hover:bg-[#FAFAFA] cursor-pointer select-none",
+          "inline-flex items-center justify-center gap-1.5 rounded-sm transition-colors duration-150 cursor-pointer select-none",
           size === "sm" ? "min-h-7 min-w-7 px-2 text-xs" : "min-h-8 min-w-8 px-2.5 text-xs",
-          status === "copied" && "border-[#0A0A0A] bg-[#0A0A0A] text-white hover:bg-[#262626]",
-          status === "failed" && "border-[#991B1B] text-[#991B1B]",
+          status === "copied"
+            ? "border border-[#0A0A0A] bg-[#0A0A0A] text-white hover:border-[#0A0A0A] hover:bg-[#262626]"
+            : status === "failed"
+              ? "border border-[#991B1B] bg-white text-[#991B1B] hover:bg-[#FEF2F2]"
+              : variant === "ghost"
+                ? "border border-transparent bg-transparent text-[#0A0A0A] hover:bg-white"
+                : "border border-[#E5E5E5] bg-white text-[#0A0A0A] hover:border-[#0A0A0A] hover:bg-[#FAFAFA]",
           className
         )}
       >

@@ -133,17 +133,15 @@ class TransferFileStorage {
     return this.loadMetaReceived(fileId);
   }
 
-  public async finalizeAndDownload(
+  public async finalizeIncomingFile(
     fileId: string,
-    fileName: string,
     totalChunks: number,
     mimeType: string
-  ): Promise<void> {
+  ): Promise<Blob> {
     const pending = this.writeChains.get(fileId);
     if (pending) await pending;
 
     const backend = await this.getBackendKind();
-    let blob: Blob;
 
     if (backend === "OPFS") {
       const writer = this.activeWriters.get(fileId);
@@ -153,28 +151,29 @@ class TransferFileStorage {
       }
       const dir = await this.getOpfsDirectory();
       if (totalChunks === 0) {
-        blob = new Blob([], { type: mimeType || "application/octet-stream" });
-      } else {
-        const handle = await dir.getFileHandle(`${fileId}.bin`, { create: false });
-        const file = await handle.getFile();
-        blob = mimeType ? file.slice(0, file.size, mimeType) : file;
+        return new Blob([], { type: mimeType || "application/octet-stream" });
       }
-    } else {
-      const db = await this.getDb();
-      const parts: ArrayBuffer[] = [];
-      for (let i = 0; i < totalChunks; i++) {
-        const tx = db.transaction(IDB_CHUNKS_STORE, "readonly");
-        const chunk = (await idbRequest(
-          tx.objectStore(IDB_CHUNKS_STORE).get(`${fileId}:${i}`)
-        )) as ArrayBuffer | undefined;
-        if (!chunk) {
-          throw new Error(`Missing chunk ${i} during assembly.`);
-        }
-        parts.push(chunk);
-      }
-      blob = new Blob(parts, { type: mimeType || "application/octet-stream" });
+      const handle = await dir.getFileHandle(`${fileId}.bin`, { create: false });
+      const file = await handle.getFile();
+      return mimeType ? file.slice(0, file.size, mimeType) : file;
     }
 
+    const db = await this.getDb();
+    const parts: ArrayBuffer[] = [];
+    for (let i = 0; i < totalChunks; i++) {
+      const tx = db.transaction(IDB_CHUNKS_STORE, "readonly");
+      const chunk = (await idbRequest(
+        tx.objectStore(IDB_CHUNKS_STORE).get(`${fileId}:${i}`)
+      )) as ArrayBuffer | undefined;
+      if (!chunk) {
+        throw new Error(`Missing chunk ${i} during assembly.`);
+      }
+      parts.push(chunk);
+    }
+    return new Blob(parts, { type: mimeType || "application/octet-stream" });
+  }
+
+  public triggerBrowserDownload(blob: Blob, fileName: string): void {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
@@ -184,10 +183,8 @@ class TransferFileStorage {
     anchor.click();
     anchor.remove();
 
-    // Delay cleanup briefly so the browser download manager completes reading the object URL.
     setTimeout(() => {
       URL.revokeObjectURL(url);
-      void this.purgeTransfer(fileId, totalChunks);
     }, 15_000);
   }
 
