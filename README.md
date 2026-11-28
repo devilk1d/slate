@@ -1,12 +1,12 @@
 <div align="center">
   <img src="public/logo.svg" alt="Slate logo" width="88" height="88" />
   <h1>Slate</h1>
-  <p>Zero-database peer-to-peer file transfer and live ephemeral scratchpad over WebRTC.</p>
+  <p>Zero-database multi-peer file transfer and live ephemeral scratchpad over WebRTC.</p>
 
   <p>
     <img src="https://img.shields.io/badge/License-AGPL--3.0-0A0A0A?style=flat-square" alt="License: AGPL-3.0" />
     <img src="https://img.shields.io/badge/TypeScript-Strict-0A0A0A?style=flat-square" alt="TypeScript" />
-    <img src="https://img.shields.io/badge/Transport-WebRTC%20DTLS-0A0A0A?style=flat-square" alt="WebRTC" />
+    <img src="https://img.shields.io/badge/Transport-WebRTC%20DTLS%20Mesh-0A0A0A?style=flat-square" alt="WebRTC" />
     <img src="https://img.shields.io/badge/Storage-OPFS%20%2F%20IndexedDB-0A0A0A?style=flat-square" alt="OPFS" />
     <img src="https://img.shields.io/badge/Database-Zero--Database-0A0A0A?style=flat-square" alt="Zero-Database" />
   </p>
@@ -16,43 +16,48 @@
 
 ## Overview
 
-Slate is an open-source, privacy-first browser workspace for direct peer-to-peer file/folder streaming and real-time ephemeral text sharing. No user files, clipboard snippets, or session histories ever touch a backend server or database.
+Slate is an open-source, privacy-first browser workspace for direct peer-to-peer file/folder streaming and real-time ephemeral text sharing across up to **6 devices per room**. No user files, clipboard snippets, or session histories ever touch a backend server or database.
 
-A minimalist Node.js WebSocket server brokers 6-digit room codes and WebRTC SDP/ICE negotiation. Once the DTLS-encrypted `RTCPeerConnection` is established, all data flows directly between browsers over dual `RTCDataChannel` streams.
+A minimalist signaling broker (standalone Node.js `ws` or Cloudflare Workers Durable Objects with WebSocket Hibernation) coordinates 6-digit room codes and WebRTC SDP/ICE negotiation. Once DTLS-encrypted `RTCPeerConnection` links are established in a full mesh, all data flows directly between browsers over dual `RTCDataChannel` streams.
 
 ## Key Features
 
-- **Zero-Cloud Privacy:** Zero central database, zero file uploads, and automatic room purging when peers disconnect.
-- **Live Ephemeral Scratchpad:** Real-time bidirectional feed over an ordered `control` DataChannel with sender labels, timestamps, one-click copy, and synchronized session wipe.
-- **OPFS-First Disk Streaming:** Incoming 64 KB chunks stream directly to the browser Origin Private File System (`navigator.storage.getDirectory()`) with automatic fallback to IndexedDB on unsupported browsers, keeping RAM usage minimal.
-- **Pause & Auto-Resume:** Manual Pause/Resume and automatic drop recovery negotiate missing chunk indices upon reconnect and resume from the exact last received byte.
-- **Direct Folder Drop:** Drag-and-drop entire folders (`webkitGetAsEntry` and `webkitdirectory`) while preserving relative directory paths.
-- **Mobile Wake Lock & QR Pairing:** Acquires Screen Wake Lock during active transfers and generates instant local QR codes (`?room=XXXXXX`) alongside custom STUN/TURN configuration in `localStorage`.
+- **Multi-Peer Mesh & Selective Target Transfer:** Pair up to 6 devices in one room (`XXX-XXX`). Choose specific target devices before sending files so upload bandwidth only streams to selected peers.
+- **Zero-Cloud Privacy:** Zero central database, zero server file storage, and automatic room cleanup on disconnect.
+- **Live Ephemeral Scratchpad:** Real-time bidirectional feed broadcast across all connected room peers over ordered `control` DataChannels, with device labels, timestamps, one-click copy, reconnect sync, and synchronized session wipe.
+- **OPFS-First Disk Streaming:** Incoming 64 KB chunks write directly to the browser Origin Private File System (`navigator.storage.getDirectory()`) with automatic IndexedDB fallback, keeping RAM usage minimal.
+- **Manual & Bulk Download Control:** Completed incoming files stay staged in browser storage without unsolicited auto-downloads, with per-file **Download** and multi-select **Download Selected** bulk controls.
+- **Pause, Speed/ETA & Auto-Resume:** Per-transfer throughput and ETA telemetry, manual Pause/Resume/Cancel, and automatic missing-chunk negotiation upon reconnect.
+- **Direct Folder Drop & Mobile Ready:** Drag-and-drop nested folders (`webkitGetAsEntry` / `webkitdirectory`), Screen Wake Lock during active transfers, local SVG QR pairing (`?room=XXXXXX`), multi-STUN defaults, and custom STUN/TURN configuration in `localStorage`.
 
 ## Architecture
 
 ```text
 +-------------------+                              +-------------------+
-|     Browser A     |                              |     Browser B     |
+|     Device A      |                              |     Device B      |
 |  Next.js Client   |                              |  Next.js Client   |
 +---------+---------+                              +---------+---------+
           |                                                  |
-          |  1. Room Code (XXX-XXX), SDP Offer/Answer, ICE   |
+          |  1. Room Code (XXX-XXX, up to 6 peers), SDP/ICE  |
           +---------------------->+  +<----------------------+
                                   |  |
-                        +---------+--+---------+
-                        |  ws Signaling Server |
-                        |   (Zero Persistence) |
-                        +----------------------+
-          |                                                  |
-          |  2. Direct WebRTC DTLS PeerConnection            |
-          |==================================================|
-          |  control channel     : JSON (scratchpad, sync)   |
-          |  file-stream channel : 64 KB binary chunks       |
-          +--------------------------------------------------+
+                  +---------------+--+---------------+
+                  |    Signaling Broker (Zero DB)    |
+                  |  Node.js ws  |  CF Durable Obj.  |
+                  +----------------------------------+
+                                  ^
+                                  | (Device C..F join same mesh)
+                                  v
++----------------------------------------------------------------------+
+|          2. Direct WebRTC DTLS Mesh (Per-Peer DataChannels)          |
+|======================================================================|
+|  control channel     : JSON (scratchpad broadcast, offer/ack, sync)  |
+|  file-stream channel : 64 KB binary chunks (selective targets only)  |
++----------------------------------------------------------------------+
           |                                                  |
           v                                                  v
    [File Slice API]                              [OPFS / IndexedDB]
+                                                 [Manual / Bulk Save]
 ```
 
 ## Quick Start
@@ -99,26 +104,26 @@ Copy the deployed `wss://slate-signaling.<your-subdomain>.workers.dev` URL into 
 
 ```text
 slate/
-├── app/                   # Next.js App Router layout, global tokens, and entry page
+├── app/                   # Next.js App Router layout, global tokens, icon.svg, and entry page
 ├── components/
 │   ├── ui/                # Reusable monochrome UI primitives (Button, Badge, Modal, ProgressBar, CopyButton)
-│   ├── DropzonePanel.tsx  # Drag-and-drop file and directory selector
+│   ├── DropzonePanel.tsx  # Target device selector + file and folder dropzone
 │   ├── IceSettingsModal.tsx
-│   ├── PairingModal.tsx   # QR code generator and 6-digit room join form
+│   ├── PairingModal.tsx   # Local SVG QR generator and 6-digit room join form
 │   ├── ScratchpadPanel.tsx
-│   ├── SessionHeader.tsx  # Device identifier, DTLS status, room badge
+│   ├── SessionHeader.tsx  # Device identifier, DTLS status, multi-peer badges, room capacity
 │   ├── SlateMark.tsx      # Monochrome geometric brand mark
 │   ├── SlateWorkspace.tsx
-│   └── TransferQueue.tsx  # Real-time speed, ETA, and pause/resume controls
+│   └── TransferQueue.tsx  # Speed, ETA, Pause/Resume, and selective bulk download
 ├── core/
-│   ├── chunker.ts         # 64 KB binary framing and directory traversal
+│   ├── chunker.ts         # 64 KB binary framing and recursive directory traversal
 │   ├── protocol.ts        # Signaling and DataChannel message contracts
 │   ├── scratchpad.ts      # Ephemeral scratchpad entry helpers
-│   └── webrtc.ts          # RTCPeerConnection, dual DataChannels, SCTP flow control
+│   └── webrtc.ts          # Multi-peer RTCPeerConnection mesh, SCTP flow control, ICE diagnostics
 ├── hooks/
-│   ├── useFileTransfer.ts # Chunked transfer engine with auto-resume
-│   ├── usePeerSession.ts  # React lifecycle wrapper for WebRTC manager
-│   ├── useScratchpad.ts   # Bidirectional scratchpad state sync
+│   ├── useFileTransfer.ts # Per-peer chunked transfer engine with auto-resume and bulk save
+│   ├── usePeerSession.ts  # React lifecycle wrapper for WebRTC mesh manager
+│   ├── useScratchpad.ts   # Broadcast scratchpad state sync
 │   └── useWakeLock.ts     # Screen Wake Lock management
 ├── lib/
 │   ├── cn.ts
@@ -130,9 +135,15 @@ slate/
 ├── public/
 │   └── logo.svg           # High-contrast geometric Slate mark
 ├── server/
-│   └── signaling.ts       # Minimalist ws signaling broker (< 200 lines)
+│   └── signaling.ts       # Minimalist Node.js ws signaling broker (< 200 lines)
+├── workers/
+│   ├── signaling.ts       # Cloudflare Workers Durable Object signaling adapter
+│   └── wrangler.jsonc     # Wrangler configuration (SQLite-backed Durable Object)
+├── .env.example
 ├── Dockerfile
+├── Dockerfile.signaling
 ├── docker-compose.yml
+├── docker-entrypoint.sh
 └── LICENSE                # GNU AGPL-3.0
 ```
 
