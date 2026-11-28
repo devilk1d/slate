@@ -8,6 +8,7 @@ import {
   encodeChunkFrame,
   type QueuedInputFile,
 } from "@/core/chunker";
+import { safeRandomId } from "@/lib/deviceIdentity";
 import { fileStorage, type StorageBackendKind } from "@/lib/fileStorage";
 import type { UsePeerSessionResult } from "@/hooks/usePeerSession";
 
@@ -20,8 +21,12 @@ export type TransferStatus =
   | "cancelled"
   | "error";
 
+const PENDING_PEER_ID = "__pending__";
+
 export interface TransferItem {
   fileId: string;
+  peerId: string;
+  peerLabel: string;
   name: string;
   relativePath: string;
   size: number;
@@ -59,7 +64,7 @@ export interface UseFileTransferResult {
   transfers: TransferItem[];
   activeCount: number;
   storageBackend: StorageBackendKind;
-  enqueueFiles: (inputs: QueuedInputFile[]) => void;
+  enqueueFiles: (inputs: QueuedInputFile[], targetPeerIds: string[]) => void;
   pauseTransfer: (fileId: string) => void;
   resumeTransfer: (fileId: string) => void;
   cancelTransfer: (fileId: string) => void;
@@ -77,6 +82,7 @@ export function useFileTransfer(
 
   const outgoingRef = useRef<Map<string, OutgoingContext>>(new Map());
   const incomingRef = useRef<Map<string, IncomingContext>>(new Map());
+  const peersRef = useRef(session.peers);
   const rateTrackerRef = useRef<
     Map<
       string,
@@ -91,16 +97,13 @@ export function useFileTransfer(
   >(new Map());
 
   const {
-    connectionState,
-    sendControl,
-    sendBinaryChunk,
+    peers,
+    sendControlToPeer,
+    sendBinaryChunkToPeer,
     subscribeControl,
     subscribeBinary,
+    subscribePeerConnected,
   } = session;
-
-  useEffect(() => {
-    void fileStorage.getBackendKind().then(setStorageBackend);
-  }, []);
 
   const syncStateList = useCallback(() => {
     const all: TransferItem[] = [
@@ -108,6 +111,34 @@ export function useFileTransfer(
       ...Array.from(incomingRef.current.values()).map((c) => ({ ...c.meta })),
     ];
     setTransfers(all);
+  }, []);
+
+  useEffect(() => {
+    peersRef.current = peers;
+    const labels = new Map(peers.map((p) => [p.peerId, p.label]));
+    let changed = false;
+
+    for (const ctx of outgoingRef.current.values()) {
+      const nextLabel = labels.get(ctx.meta.peerId);
+      if (nextLabel && nextLabel !== ctx.meta.peerLabel) {
+        ctx.meta.peerLabel = nextLabel;
+        changed = true;
+      }
+    }
+    for (const ctx of incomingRef.current.values()) {
+      const nextLabel = labels.get(ctx.meta.peerId);
+      if (nextLabel && nextLabel !== ctx.meta.peerLabel) {
+        ctx.meta.peerLabel = nextLabel;
+        changed = true;
+      }
+    }
+    if (changed) {
+      queueMicrotask(syncStateList);
+    }
+  }, [peers, syncStateList]);
+
+  useEffect(() => {
+    void fileStorage.getBackendKind().then(setStorageBackend);
   }, []);
 
   const resetRateTracker = useCallback((fileId: string, baselineBytes: number) => {
@@ -121,53 +152,57 @@ export function useFileTransfer(
     });
   }, []);
 
-  const updateThroughput = useCallback((fileId: string, bytesNow: number, totalSize: number) => {
-    const now = performance.now();
-    let tracker = rateTrackerRef.current.get(fileId);
+  const updateThroughput = useCallback(
+    (fileId: string, bytesNow: number, totalSize: number) => {
+      const now = performance.now();
+      let tracker = rateTrackerRef.current.get(fileId);
 
-    if (!tracker) {
-      tracker = {
-        startTime: now,
-        startBytes: 0,
-        lastTime: now,
-        lastBytes: 0,
-        emaSpeed: 0,
-      };
-      rateTrackerRef.current.set(fileId, tracker);
-    }
+      if (!tracker) {
+        tracker = {
+          startTime: now,
+          startBytes: 0,
+          lastTime: now,
+          lastBytes: 0,
+          emaSpeed: 0,
+        };
+        rateTrackerRef.current.set(fileId, tracker);
+      }
 
-    const windowSec = (now - tracker.lastTime) / 1000;
-    const totalSec = Math.max(0.01, (now - tracker.startTime) / 1000);
+      const windowSec = (now - tracker.lastTime) / 1000;
+      const totalSec = Math.max(0.01, (now - tracker.startTime) / 1000);
 
-    if (windowSec >= 0.2) {
-      const deltaBytes = Math.max(0, bytesNow - tracker.lastBytes);
-      const instant = deltaBytes / windowSec;
-      const ema =
-        tracker.emaSpeed === 0 ? instant : tracker.emaSpeed * 0.65 + instant * 0.35;
-      tracker = {
-        ...tracker,
-        lastTime: now,
-        lastBytes: bytesNow,
-        emaSpeed: ema,
-      };
-      rateTrackerRef.current.set(fileId, tracker);
-    }
+      if (windowSec >= 0.2) {
+        const deltaBytes = Math.max(0, bytesNow - tracker.lastBytes);
+        const instant = deltaBytes / windowSec;
+        const ema =
+          tracker.emaSpeed === 0 ? instant : tracker.emaSpeed * 0.65 + instant * 0.35;
+        tracker = {
+          ...tracker,
+          lastTime: now,
+          lastBytes: bytesNow,
+          emaSpeed: ema,
+        };
+        rateTrackerRef.current.set(fileId, tracker);
+      }
 
-    // Use cumulative speed before the first 200ms EMA window completes so fast transfers show ETA immediately.
-    const effectiveSpeed =
-      tracker.emaSpeed > 0
-        ? tracker.emaSpeed
-        : Math.max(0, bytesNow - tracker.startBytes) / totalSec;
-    const remaining = Math.max(0, totalSize - bytesNow);
-    const eta = effectiveSpeed > 0 ? remaining / effectiveSpeed : -1;
+      // Use cumulative speed before the first 200ms EMA window completes so fast transfers show ETA immediately.
+      const effectiveSpeed =
+        tracker.emaSpeed > 0
+          ? tracker.emaSpeed
+          : Math.max(0, bytesNow - tracker.startBytes) / totalSec;
+      const remaining = Math.max(0, totalSize - bytesNow);
+      const eta = effectiveSpeed > 0 ? remaining / effectiveSpeed : -1;
 
-    return { speed: effectiveSpeed, eta };
-  }, []);
+      return { speed: effectiveSpeed, eta };
+    },
+    []
+  );
 
   const streamOutgoingChunks = useCallback(
     async (fileId: string): Promise<void> => {
       const ctx = outgoingRef.current.get(fileId);
       if (!ctx || ctx.sending || ctx.paused || ctx.cancelled) return;
+      if (ctx.meta.peerId === PENDING_PEER_ID) return;
 
       ctx.sending = true;
       ctx.meta.status = "transferring";
@@ -178,7 +213,7 @@ export function useFileTransfer(
         const total = ctx.meta.totalChunks;
 
         if (total === 0) {
-          sendControl({ type: "file:complete", fileId });
+          sendControlToPeer(ctx.meta.peerId, { type: "file:complete", fileId });
           ctx.meta.status = "completed";
           ctx.meta.speedBytesPerSec = 0;
           ctx.meta.etaSeconds = 0;
@@ -195,7 +230,7 @@ export function useFileTransfer(
           const sliceBuffer = await ctx.file.slice(start, end).arrayBuffer();
           const frame = encodeChunkFrame(fileId, idx, sliceBuffer);
 
-          await sendBinaryChunk(frame);
+          await sendBinaryChunkToPeer(ctx.meta.peerId, frame);
           ctx.receivedChunks.add(idx);
 
           const bytesSent = Math.min(
@@ -214,7 +249,7 @@ export function useFileTransfer(
         }
 
         if (!ctx.paused && !ctx.cancelled) {
-          sendControl({ type: "file:complete", fileId });
+          sendControlToPeer(ctx.meta.peerId, { type: "file:complete", fileId });
           ctx.meta.status = "completed";
           ctx.meta.completedChunks = total;
           ctx.meta.transferredBytes = ctx.file.size;
@@ -224,7 +259,6 @@ export function useFileTransfer(
         }
       } catch (err) {
         if (!ctx.paused && !ctx.cancelled) {
-          // Keep status queued when transport drops mid-stream so reconnect auto-resumes.
           ctx.meta.status = "queued";
           ctx.meta.speedBytesPerSec = 0;
           ctx.meta.errorMessage =
@@ -235,7 +269,13 @@ export function useFileTransfer(
         ctx.sending = false;
       }
     },
-    [resetRateTracker, sendBinaryChunk, sendControl, syncStateList, updateThroughput]
+    [
+      resetRateTracker,
+      sendBinaryChunkToPeer,
+      sendControlToPeer,
+      syncStateList,
+      updateThroughput,
+    ]
   );
 
   const finalizeIncoming = useCallback(
@@ -267,7 +307,10 @@ export function useFileTransfer(
   );
 
   useEffect(() => {
-    return subscribeControl((message) => {
+    return subscribeControl((fromPeerId, message) => {
+      const peerLabel =
+        peersRef.current.find((p) => p.peerId === fromPeerId)?.label ?? "Slate-Peer";
+
       switch (message.type) {
         case "file:offer": {
           void (async () => {
@@ -288,6 +331,8 @@ export function useFileTransfer(
             const ctx: IncomingContext = {
               meta: {
                 fileId: message.fileId,
+                peerId: fromPeerId,
+                peerLabel,
                 name: message.name,
                 relativePath: message.relativePath,
                 size: message.size,
@@ -310,7 +355,7 @@ export function useFileTransfer(
             incomingRef.current.set(message.fileId, ctx);
             resetRateTracker(message.fileId, bytesReceived);
             syncStateList();
-            sendControl({
+            sendControlToPeer(fromPeerId, {
               type: "file:accept",
               fileId: message.fileId,
               receivedChunks: Array.from(receivedSet),
@@ -320,7 +365,7 @@ export function useFileTransfer(
         }
         case "file:accept": {
           const ctx = outgoingRef.current.get(message.fileId);
-          if (!ctx) break;
+          if (!ctx || ctx.meta.peerId !== fromPeerId) break;
           ctx.receivedChunks = new Set(message.receivedChunks);
           ctx.meta.completedChunks = ctx.receivedChunks.size;
           ctx.meta.transferredBytes = Math.min(
@@ -334,7 +379,7 @@ export function useFileTransfer(
         }
         case "file:complete": {
           const ctx = incomingRef.current.get(message.fileId);
-          if (!ctx) break;
+          if (!ctx || ctx.meta.peerId !== fromPeerId) break;
           if (ctx.receivedChunks.size >= ctx.meta.totalChunks) {
             void finalizeIncoming(ctx);
           }
@@ -342,13 +387,13 @@ export function useFileTransfer(
         }
         case "file:pause": {
           const outCtx = outgoingRef.current.get(message.fileId);
-          if (outCtx) {
+          if (outCtx && outCtx.meta.peerId === fromPeerId) {
             outCtx.paused = true;
             outCtx.meta.status = "paused";
             outCtx.meta.speedBytesPerSec = 0;
           }
           const inCtx = incomingRef.current.get(message.fileId);
-          if (inCtx) {
+          if (inCtx && inCtx.meta.peerId === fromPeerId) {
             inCtx.paused = true;
             inCtx.meta.status = "paused";
             inCtx.meta.speedBytesPerSec = 0;
@@ -359,14 +404,14 @@ export function useFileTransfer(
         }
         case "file:resume": {
           const outCtx = outgoingRef.current.get(message.fileId);
-          if (outCtx) {
+          if (outCtx && outCtx.meta.peerId === fromPeerId) {
             outCtx.paused = false;
             outCtx.receivedChunks = new Set(message.receivedChunks);
             outCtx.meta.errorMessage = undefined;
             void streamOutgoingChunks(message.fileId);
           }
           const inCtx = incomingRef.current.get(message.fileId);
-          if (inCtx) {
+          if (inCtx && inCtx.meta.peerId === fromPeerId) {
             inCtx.paused = false;
             inCtx.meta.status = "transferring";
             inCtx.meta.errorMessage = undefined;
@@ -376,13 +421,13 @@ export function useFileTransfer(
         }
         case "file:cancel": {
           const outCtx = outgoingRef.current.get(message.fileId);
-          if (outCtx) {
+          if (outCtx && outCtx.meta.peerId === fromPeerId) {
             outCtx.cancelled = true;
             outCtx.meta.status = "cancelled";
             outCtx.meta.speedBytesPerSec = 0;
           }
           const inCtx = incomingRef.current.get(message.fileId);
-          if (inCtx) {
+          if (inCtx && inCtx.meta.peerId === fromPeerId) {
             inCtx.cancelled = true;
             inCtx.meta.status = "cancelled";
             inCtx.meta.speedBytesPerSec = 0;
@@ -394,7 +439,12 @@ export function useFileTransfer(
         case "transfer:sync": {
           for (const item of message.incoming) {
             const outCtx = outgoingRef.current.get(item.fileId);
-            if (outCtx && !outCtx.cancelled && outCtx.meta.status !== "completed") {
+            if (
+              outCtx &&
+              outCtx.meta.peerId === fromPeerId &&
+              !outCtx.cancelled &&
+              outCtx.meta.status !== "completed"
+            ) {
               outCtx.receivedChunks = new Set(item.receivedChunks);
               outCtx.meta.completedChunks = outCtx.receivedChunks.size;
               outCtx.meta.transferredBytes = Math.min(
@@ -415,19 +465,19 @@ export function useFileTransfer(
   }, [
     finalizeIncoming,
     resetRateTracker,
-    sendControl,
+    sendControlToPeer,
     streamOutgoingChunks,
     subscribeControl,
     syncStateList,
   ]);
 
   useEffect(() => {
-    return subscribeBinary((buffer) => {
+    return subscribeBinary((fromPeerId, buffer) => {
       const frame = decodeChunkFrame(buffer);
       if (!frame) return;
 
       const ctx = incomingRef.current.get(frame.fileId);
-      if (!ctx || ctx.cancelled) return;
+      if (!ctx || ctx.cancelled || ctx.meta.peerId !== fromPeerId) return;
 
       const byteOffset = frame.chunkIndex * CHUNK_SIZE;
       void fileStorage
@@ -461,86 +511,127 @@ export function useFileTransfer(
   }, [finalizeIncoming, subscribeBinary, syncStateList, updateThroughput]);
 
   useEffect(() => {
-    if (connectionState !== "connected") return;
+    return subscribePeerConnected((peerId) => {
+      const peerLabel =
+        peersRef.current.find((p) => p.peerId === peerId)?.label ?? "Slate-Peer";
 
-    const incompleteIncoming = Array.from(incomingRef.current.values())
-      .filter((c) => !c.cancelled && c.meta.status !== "completed")
-      .map((c) => ({
-        fileId: c.meta.fileId,
-        receivedChunks: Array.from(c.receivedChunks),
-      }));
+      const incompleteIncoming = Array.from(incomingRef.current.values())
+        .filter(
+          (c) =>
+            c.meta.peerId === peerId &&
+            !c.cancelled &&
+            c.meta.status !== "completed"
+        )
+        .map((c) => ({
+          fileId: c.meta.fileId,
+          receivedChunks: Array.from(c.receivedChunks),
+        }));
 
-    if (incompleteIncoming.length > 0) {
-      sendControl({ type: "transfer:sync", incoming: incompleteIncoming });
-    }
-
-    for (const ctx of outgoingRef.current.values()) {
-      if (
-        !ctx.paused &&
-        !ctx.cancelled &&
-        !ctx.sending &&
-        ctx.meta.status !== "completed"
-      ) {
-        sendControl({
-          type: "file:offer",
-          fileId: ctx.meta.fileId,
-          name: ctx.meta.name,
-          relativePath: ctx.meta.relativePath,
-          size: ctx.meta.size,
-          mimeType: ctx.meta.mimeType,
-          chunkSize: CHUNK_SIZE,
-          totalChunks: ctx.meta.totalChunks,
+      if (incompleteIncoming.length > 0) {
+        sendControlToPeer(peerId, {
+          type: "transfer:sync",
+          incoming: incompleteIncoming,
         });
       }
-    }
-  }, [connectionState, sendControl]);
 
-  const enqueueFiles = useCallback(
-    (inputs: QueuedInputFile[]) => {
-      for (const { file, relativePath } of inputs) {
-        const fileId = crypto.randomUUID();
-        const totalChunks = calculateTotalChunks(file.size, CHUNK_SIZE);
-        const meta: TransferItem = {
-          fileId,
-          name: file.name,
-          relativePath,
-          size: file.size,
-          mimeType: file.type || "application/octet-stream",
-          direction: "outgoing",
-          status: connectionState === "connected" ? "queued" : "queued",
-          totalChunks,
-          completedChunks: 0,
-          transferredBytes: 0,
-          speedBytesPerSec: 0,
-          etaSeconds: -1,
-          storageBackend,
-        };
+      let boundPending = false;
+      for (const ctx of outgoingRef.current.values()) {
+        if (ctx.meta.peerId === PENDING_PEER_ID) {
+          ctx.meta.peerId = peerId;
+          ctx.meta.peerLabel = peerLabel;
+          boundPending = true;
+        }
 
-        outgoingRef.current.set(fileId, {
-          file,
-          meta,
-          receivedChunks: new Set(),
-          sending: false,
-          paused: false,
-          cancelled: false,
-        });
-
-        if (connectionState === "connected") {
-          sendControl({
+        if (
+          ctx.meta.peerId === peerId &&
+          !ctx.paused &&
+          !ctx.cancelled &&
+          !ctx.sending &&
+          ctx.meta.status !== "completed"
+        ) {
+          sendControlToPeer(peerId, {
             type: "file:offer",
-            fileId,
-            name: meta.name,
-            relativePath: meta.relativePath,
-            size: meta.size,
-            mimeType: meta.mimeType,
+            fileId: ctx.meta.fileId,
+            name: ctx.meta.name,
+            relativePath: ctx.meta.relativePath,
+            size: ctx.meta.size,
+            mimeType: ctx.meta.mimeType,
             chunkSize: CHUNK_SIZE,
-            totalChunks,
+            totalChunks: ctx.meta.totalChunks,
           });
         }
       }
+      if (boundPending) {
+        syncStateList();
+      }
+    });
+  }, [sendControlToPeer, subscribePeerConnected, syncStateList]);
+
+  const enqueueFiles = useCallback(
+    (inputs: QueuedInputFile[], targetPeerIds: string[]) => {
+      const peerMap = new Map(peersRef.current.map((p) => [p.peerId, p]));
+      const validTargets = targetPeerIds.filter((id) => peerMap.has(id));
+
+      // When offline/waiting before any peer joins, stage once for the first peer that connects.
+      const resolvedTargets =
+        validTargets.length > 0
+          ? validTargets
+          : peersRef.current.length === 0
+            ? [PENDING_PEER_ID]
+            : [];
+
+      for (const targetId of resolvedTargets) {
+        const targetPeer = peerMap.get(targetId);
+        const peerLabel = targetPeer?.label ?? "Next peer";
+
+        for (const { file, relativePath } of inputs) {
+          const fileId = safeRandomId();
+          const totalChunks = calculateTotalChunks(file.size, CHUNK_SIZE);
+          const meta: TransferItem = {
+            fileId,
+            peerId: targetId,
+            peerLabel,
+            name: file.name,
+            relativePath,
+            size: file.size,
+            mimeType: file.type || "application/octet-stream",
+            direction: "outgoing",
+            status: "queued",
+            totalChunks,
+            completedChunks: 0,
+            transferredBytes: 0,
+            speedBytesPerSec: 0,
+            etaSeconds: -1,
+            storageBackend,
+          };
+
+          outgoingRef.current.set(fileId, {
+            file,
+            meta,
+            receivedChunks: new Set(),
+            sending: false,
+            paused: false,
+            cancelled: false,
+          });
+
+          if (targetPeer?.state === "connected") {
+            sendControlToPeer(targetId, {
+              type: "file:offer",
+              fileId,
+              name: meta.name,
+              relativePath: meta.relativePath,
+              size: meta.size,
+              mimeType: meta.mimeType,
+              chunkSize: CHUNK_SIZE,
+              totalChunks,
+            });
+          }
+        }
+      }
+
       syncStateList();
     },
-    [connectionState, sendControl, storageBackend, syncStateList]
+    [sendControlToPeer, storageBackend, syncStateList]
   );
 
   const pauseTransfer = useCallback(
@@ -550,7 +641,9 @@ export function useFileTransfer(
         outCtx.paused = true;
         outCtx.meta.status = "paused";
         outCtx.meta.speedBytesPerSec = 0;
-        sendControl({ type: "file:pause", fileId });
+        if (outCtx.meta.peerId !== PENDING_PEER_ID) {
+          sendControlToPeer(outCtx.meta.peerId, { type: "file:pause", fileId });
+        }
       }
       const inCtx = incomingRef.current.get(fileId);
       if (inCtx && !inCtx.cancelled && inCtx.meta.status !== "completed") {
@@ -558,11 +651,11 @@ export function useFileTransfer(
         inCtx.meta.status = "paused";
         inCtx.meta.speedBytesPerSec = 0;
         void fileStorage.flushMeta(fileId);
-        sendControl({ type: "file:pause", fileId });
+        sendControlToPeer(inCtx.meta.peerId, { type: "file:pause", fileId });
       }
       syncStateList();
     },
-    [sendControl, syncStateList]
+    [sendControlToPeer, syncStateList]
   );
 
   const resumeTransfer = useCallback(
@@ -571,19 +664,21 @@ export function useFileTransfer(
       if (outCtx && !outCtx.cancelled && outCtx.meta.status !== "completed") {
         outCtx.paused = false;
         outCtx.meta.errorMessage = undefined;
-        sendControl({
-          type: "file:resume",
-          fileId,
-          receivedChunks: Array.from(outCtx.receivedChunks),
-        });
-        void streamOutgoingChunks(fileId);
+        if (outCtx.meta.peerId !== PENDING_PEER_ID) {
+          sendControlToPeer(outCtx.meta.peerId, {
+            type: "file:resume",
+            fileId,
+            receivedChunks: Array.from(outCtx.receivedChunks),
+          });
+          void streamOutgoingChunks(fileId);
+        }
       }
       const inCtx = incomingRef.current.get(fileId);
       if (inCtx && !inCtx.cancelled && inCtx.meta.status !== "completed") {
         inCtx.paused = false;
         inCtx.meta.status = "transferring";
         inCtx.meta.errorMessage = undefined;
-        sendControl({
+        sendControlToPeer(inCtx.meta.peerId, {
           type: "file:resume",
           fileId,
           receivedChunks: Array.from(inCtx.receivedChunks),
@@ -591,7 +686,7 @@ export function useFileTransfer(
       }
       syncStateList();
     },
-    [sendControl, streamOutgoingChunks, syncStateList]
+    [sendControlToPeer, streamOutgoingChunks, syncStateList]
   );
 
   const cancelTransfer = useCallback(
@@ -601,7 +696,9 @@ export function useFileTransfer(
         outCtx.cancelled = true;
         outCtx.meta.status = "cancelled";
         outCtx.meta.speedBytesPerSec = 0;
-        sendControl({ type: "file:cancel", fileId });
+        if (outCtx.meta.peerId !== PENDING_PEER_ID) {
+          sendControlToPeer(outCtx.meta.peerId, { type: "file:cancel", fileId });
+        }
       }
       const inCtx = incomingRef.current.get(fileId);
       if (inCtx) {
@@ -609,11 +706,11 @@ export function useFileTransfer(
         inCtx.meta.status = "cancelled";
         inCtx.meta.speedBytesPerSec = 0;
         void fileStorage.purgeTransfer(fileId, inCtx.meta.totalChunks);
-        sendControl({ type: "file:cancel", fileId });
+        sendControlToPeer(inCtx.meta.peerId, { type: "file:cancel", fileId });
       }
       syncStateList();
     },
-    [sendControl, syncStateList]
+    [sendControlToPeer, syncStateList]
   );
 
   const downloadTransfer = useCallback((fileId: string) => {

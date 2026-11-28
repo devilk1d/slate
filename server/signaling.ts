@@ -9,7 +9,7 @@ interface RoomPeer {
 }
 
 const PORT = Number(process.env.SIGNALING_PORT ?? process.env.PORT ?? 3001);
-const MAX_ROOM_PEERS = 2;
+const MAX_ROOM_PEERS = 6;
 const rooms = new Map<string, Map<string, RoomPeer>>();
 const socketMeta = new WeakMap<WebSocket, { roomCode: string; peerId: string }>();
 
@@ -74,7 +74,7 @@ function enterRoom(
 
   const isReconnect = room.has(peerId);
   if (!isReconnect && room.size >= MAX_ROOM_PEERS) {
-    send(ws, { type: "error", code: "ROOM_FULL", message: "Room already has two connected peers." });
+    send(ws, { type: "error", code: "ROOM_FULL", message: "Room already has the maximum of 6 connected peers." });
     return;
   }
 

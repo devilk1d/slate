@@ -6,9 +6,15 @@ export type PeerConnectionState =
   | "reconnecting"
   | "disconnected";
 
+export type SinglePeerState = "connecting" | "connected" | "reconnecting";
+
 export interface PeerDescriptor {
   peerId: string;
   label: string;
+}
+
+export interface RemotePeerInfo extends PeerDescriptor {
+  state: SinglePeerState;
 }
 
 export type ClientSignalMessage =

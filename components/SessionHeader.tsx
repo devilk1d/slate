@@ -11,7 +11,7 @@ import {
   SlidersHorizontal,
   Unplug,
 } from "lucide-react";
-import type { PeerConnectionState, PeerDescriptor } from "@/core/protocol";
+import type { PeerConnectionState, RemotePeerInfo } from "@/core/protocol";
 import { SlateMark } from "@/components/SlateMark";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -21,7 +21,7 @@ export interface SessionHeaderProps {
   connectionState: PeerConnectionState;
   roomCode: string | null;
   localLabel: string;
-  remotePeer: PeerDescriptor | null;
+  peers: RemotePeerInfo[];
   onUpdateLabel: (next: string) => void;
   onCreateRoom: () => void;
   onOpenPairing: () => void;
@@ -45,7 +45,7 @@ export function SessionHeader({
   connectionState,
   roomCode,
   localLabel,
-  remotePeer,
+  peers,
   onUpdateLabel,
   onCreateRoom,
   onOpenPairing,
@@ -136,12 +136,16 @@ export function SessionHeader({
               {stateMeta.label}
             </Badge>
 
-            {remotePeer && (
-              <Badge tone="active" className="max-w-[155px] sm:max-w-none">
-                <span className="text-[#525252] font-normal shrink-0">Peer:</span>
-                <span className="truncate font-mono">{remotePeer.label}</span>
+            {peers.map((peer) => (
+              <Badge
+                key={peer.peerId}
+                tone={peer.state === "connected" ? "active" : "warning"}
+                dot
+                className="max-w-[155px] sm:max-w-none"
+              >
+                <span className="truncate font-mono">{peer.label}</span>
               </Badge>
-            )}
+            ))}
 
             {roomCode && (
               <div className="inline-flex items-center gap-1.5 rounded-sm border border-[#E5E5E5] bg-[#FAFAFA] pl-2.5 pr-1 py-0.5">
@@ -150,6 +154,9 @@ export function SessionHeader({
                 </span>
                 <span className="font-mono text-xs font-semibold tabular-nums text-[#0A0A0A]">
                   {roomCode}
+                </span>
+                <span className="font-mono text-[11px] tabular-nums text-[#525252]">
+                  {peers.length + 1}/6
                 </span>
                 <CopyButton
                   text={roomCode.replace(/-/g, "")}

@@ -23,7 +23,7 @@ type ClientMessage =
   | { type: "offer" | "answer" | "ice-candidate"; targetPeerId: string; payload: unknown }
   | { type: "ping" };
 
-const MAX_ROOM_PEERS = 2;
+const MAX_ROOM_PEERS = 6;
 
 function normalizeCode(raw?: string): string {
   return (raw ?? "").replace(/\D/g, "").slice(0, 6);
@@ -205,7 +205,7 @@ export class SignalingRoom extends DurableObject<Env> {
       sendJson(ws, {
         type: "error",
         code: "ROOM_FULL",
-        message: "Room already has two connected peers.",
+        message: "Room already has the maximum of 6 connected peers.",
       });
       return;
     }

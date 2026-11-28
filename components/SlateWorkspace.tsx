@@ -39,7 +39,7 @@ export function SlateWorkspace() {
         connectionState={session.connectionState}
         roomCode={session.roomCode}
         localLabel={session.localLabel}
-        remotePeer={session.remotePeer}
+        peers={session.peers}
         onUpdateLabel={session.updateLocalLabel}
         onCreateRoom={() => {
           session.createRoom();
@@ -74,6 +74,7 @@ export function SlateWorkspace() {
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
           <DropzonePanel
             connectionState={session.connectionState}
+            peers={session.peers}
             storageBackend={transfer.storageBackend}
             wakeLockActive={wakeLockActive}
             onFilesSelected={transfer.enqueueFiles}

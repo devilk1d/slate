@@ -5,7 +5,7 @@ let cachedPeerId: string | null = null;
 let cachedDeviceLabel: string | null = null;
 const labelListeners = new Set<() => void>();
 
-function safeRandomId(): string {
+export function safeRandomId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
   }
