@@ -76,8 +76,10 @@ export function IceSettingsModal({
           <h2 className="text-xs font-semibold uppercase tracking-wider text-[#525252]">
             Built-in Default
           </h2>
-          <div className="rounded-sm border border-[#E5E5E5] bg-[#FAFAFA] px-3 py-2 font-mono text-xs text-[#0A0A0A]">
-            {String(DEFAULT_ICE_SERVERS[0].urls)}
+          <div className="rounded-sm border border-[#E5E5E5] bg-[#FAFAFA] px-3 py-2 font-mono text-xs text-[#0A0A0A] space-y-1">
+            {DEFAULT_ICE_SERVERS.map((server) => (
+              <div key={String(server.urls)}>{String(server.urls)}</div>
+            ))}
           </div>
         </section>
 

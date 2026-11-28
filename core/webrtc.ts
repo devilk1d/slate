@@ -48,6 +48,8 @@ export class PeerSessionManager {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private iceRestartTimer: ReturnType<typeof setTimeout> | null = null;
+  private negotiationTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+  private localCandidateTypes = new Set<string>();
 
   // Buffers remote ICE candidates until SDP remoteDescription is applied.
   private pendingIceCandidates: RTCIceCandidateInit[] = [];
@@ -291,6 +293,10 @@ export class PeerSessionManager {
       clearTimeout(this.iceRestartTimer);
       this.iceRestartTimer = null;
     }
+    if (this.negotiationTimeoutTimer) {
+      clearTimeout(this.negotiationTimeoutTimer);
+      this.negotiationTimeoutTimer = null;
+    }
   }
 
   private sendSignal(message: ClientSignalMessage): void {
@@ -380,14 +386,55 @@ export class PeerSessionManager {
     const pc = new RTCPeerConnection({ iceServers: getEffectiveIceServers() });
     this.pc = pc;
     this.pendingIceCandidates = [];
+    this.localCandidateTypes.clear();
+
+    if (this.negotiationTimeoutTimer) {
+      clearTimeout(this.negotiationTimeoutTimer);
+    }
+    this.negotiationTimeoutTimer = setTimeout(() => {
+      this.negotiationTimeoutTimer = null;
+      if (this.pc === pc && this.state === "connecting") {
+        const hasRelay = this.localCandidateTypes.has("relay");
+        const hasSrflx = this.localCandidateTypes.has("srflx");
+        const detail = !hasSrflx && !hasRelay
+          ? "No public STUN/TURN route found (UDP may be blocked or VPN/Private Relay is active)."
+          : !hasRelay
+            ? "Direct NAT traversal timed out. If a peer is on cellular data (4G/5G) or symmetric NAT, add a TURN relay in ICE Settings."
+            : "ICE/DTLS handshake timed out across relay.";
+        this.callbacks.onError(`Connection is taking too long: ${detail}`);
+      }
+    }, 12_000);
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
+        if (event.candidate.type) {
+          this.localCandidateTypes.add(event.candidate.type);
+        }
         this.sendSignal({
           type: "ice-candidate",
           targetPeerId: remotePeerId,
           payload: event.candidate.toJSON(),
         });
+      }
+    };
+
+    // Mobile Safari / older WebKit may surface ICE failures here before connectionState updates.
+    pc.oniceconnectionstatechange = () => {
+      if (this.pc !== pc) return;
+      if (pc.iceConnectionState === "failed") {
+        this.setState("reconnecting");
+        if (this.isInitiator(remotePeerId)) {
+          void this.triggerIceRestart(remotePeerId);
+        } else {
+          this.callbacks.onError(
+            "ICE connection failed. Both peers may be behind strict NAT/cellular firewalls requiring a TURN server in ICE Settings."
+          );
+        }
+      } else if (
+        pc.iceConnectionState === "connected" ||
+        pc.iceConnectionState === "completed"
+      ) {
+        this.evaluateConnectedState();
       }
     };
 
@@ -593,11 +640,19 @@ export class PeerSessionManager {
       this.controlChannel?.readyState === "open" &&
       this.fileChannel?.readyState === "open"
     ) {
+      if (this.negotiationTimeoutTimer) {
+        clearTimeout(this.negotiationTimeoutTimer);
+        this.negotiationTimeoutTimer = null;
+      }
       this.setState("connected");
     }
   }
 
   private teardownPeerConnection(): void {
+    if (this.negotiationTimeoutTimer) {
+      clearTimeout(this.negotiationTimeoutTimer);
+      this.negotiationTimeoutTimer = null;
+    }
     if (this.controlChannel) {
       this.controlChannel.onopen = null;
       this.controlChannel.onclose = null;
@@ -614,11 +669,13 @@ export class PeerSessionManager {
     }
     if (this.pc) {
       this.pc.onicecandidate = null;
+      this.pc.oniceconnectionstatechange = null;
       this.pc.onconnectionstatechange = null;
       this.pc.ondatachannel = null;
       this.pc.close();
       this.pc = null;
     }
     this.pendingIceCandidates = [];
+    this.localCandidateTypes.clear();
   }
 }
