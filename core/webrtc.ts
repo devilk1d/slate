@@ -285,7 +285,7 @@ export class PeerSessionManager {
       if (this.destroyed || this.ws !== socket) return;
       if (!this.roomCode) {
         this.callbacks.onError(
-          `Unable to reach signaling server (${signalingUrl}). Run "npm run dev" or "npm run dev:ws".`
+          "Unable to reach the pairing service. Check your internet connection and try again."
         );
       }
     };
@@ -475,11 +475,11 @@ export class PeerSessionManager {
         const hasSrflx = link.localCandidateTypes.has("srflx");
         const detail =
           !hasSrflx && !hasRelay
-            ? "No public STUN/TURN route found (UDP may be blocked or VPN/Private Relay is active)."
+            ? "Network restrictions or an active VPN may be blocking direct peer connections."
             : !hasRelay
-              ? "Direct NAT traversal timed out. If this peer is on cellular data (4G/5G) or symmetric NAT, add a TURN relay in ICE Settings."
-              : "ICE/DTLS handshake timed out across relay.";
-        this.callbacks.onError(`Connection to ${link.label} timed out: ${detail}`);
+              ? "If a peer is on cellular data or a restricted network, add a TURN relay in Network Settings or use the same Wi-Fi."
+              : "Peer handshake did not complete in time. Please try reconnecting.";
+        this.callbacks.onError(`Connection to ${link.label} timed out. ${detail}`);
       }
     }, 12_000);
 
@@ -505,7 +505,7 @@ export class PeerSessionManager {
           void this.triggerIceRestart(link);
         } else {
           this.callbacks.onError(
-            `ICE connection to ${link.label} failed. Both peers may be behind strict NAT/cellular firewalls requiring a TURN server.`
+            `Direct connection to ${link.label} failed. Try joining the same Wi-Fi or adding a TURN relay in Network Settings.`
           );
         }
       } else if (
@@ -591,7 +591,7 @@ export class PeerSessionManager {
         });
       }
     } catch {
-      this.callbacks.onError(`Failed to negotiate WebRTC offer with ${link.label}.`);
+      this.callbacks.onError(`Could not establish a peer session with ${link.label}. Please retry.`);
     } finally {
       link.makingOffer = false;
     }
@@ -631,7 +631,7 @@ export class PeerSessionManager {
         });
       }
     } catch {
-      this.callbacks.onError(`Failed to accept WebRTC offer from ${link.label}.`);
+      this.callbacks.onError(`Could not establish a peer session with ${link.label}. Please retry.`);
     }
   }
 
@@ -646,7 +646,7 @@ export class PeerSessionManager {
       await pc.setRemoteDescription(new RTCSessionDescription(answer));
       await this.flushPendingIceCandidates(link, pc);
     } catch {
-      this.callbacks.onError(`Failed to apply WebRTC answer from ${link.label}.`);
+      this.callbacks.onError(`Could not establish a peer session with ${link.label}. Please retry.`);
     }
   }
 

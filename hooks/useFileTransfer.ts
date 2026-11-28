@@ -257,12 +257,11 @@ export function useFileTransfer(
           ctx.meta.etaSeconds = 0;
           syncStateList();
         }
-      } catch (err) {
+      } catch {
         if (!ctx.paused && !ctx.cancelled) {
           ctx.meta.status = "queued";
           ctx.meta.speedBytesPerSec = 0;
-          ctx.meta.errorMessage =
-            err instanceof Error ? err.message : "Waiting for connection recovery.";
+          ctx.meta.errorMessage = "Connection interrupted. Waiting to resume transfer.";
           syncStateList();
         }
       } finally {
@@ -295,11 +294,10 @@ export function useFileTransfer(
         ctx.meta.transferredBytes = ctx.meta.size;
         ctx.meta.speedBytesPerSec = 0;
         ctx.meta.etaSeconds = 0;
-      } catch (err) {
+      } catch {
         ctx.finalized = false;
         ctx.meta.status = "error";
-        ctx.meta.errorMessage =
-          err instanceof Error ? err.message : "Failed to prepare received file.";
+        ctx.meta.errorMessage = "Unable to prepare the received file for download.";
       }
       syncStateList();
     },
@@ -501,10 +499,9 @@ export function useFileTransfer(
             syncStateList();
           }
         })
-        .catch((err) => {
+        .catch(() => {
           ctx.meta.status = "error";
-          ctx.meta.errorMessage =
-            err instanceof Error ? err.message : "Failed writing chunk to storage.";
+          ctx.meta.errorMessage = "Unable to save incoming file data to browser storage.";
           syncStateList();
         });
     });
