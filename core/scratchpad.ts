@@ -1,4 +1,5 @@
 import type { ScratchpadWireEntry } from "@/core/protocol";
+import { safeRandomId } from "@/lib/deviceIdentity";
 
 export interface ScratchpadEntry extends ScratchpadWireEntry {
   isLocal: boolean;
@@ -10,7 +11,7 @@ export function createScratchpadEntry(
   senderLabel: string
 ): ScratchpadEntry {
   return {
-    id: crypto.randomUUID(),
+    id: safeRandomId(),
     text,
     senderId,
     senderLabel,

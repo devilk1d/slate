@@ -25,11 +25,17 @@ export function useScratchpad(session: UsePeerSessionResult): UseScratchpadResul
     entriesRef.current = entries;
   }, [entries]);
 
-  const { subscribeControl, sendControl, connectionState, localPeerId, localLabel } =
-    session;
+  const {
+    subscribeControl,
+    subscribePeerConnected,
+    sendControlToPeer,
+    broadcastControl,
+    localPeerId,
+    localLabel,
+  } = session;
 
   useEffect(() => {
-    return subscribeControl((message) => {
+    return subscribeControl((_fromPeerId, message) => {
       if (message.type === "scratchpad:entry") {
         setLastClearedBy(null);
         setEntries((prev) =>
@@ -47,13 +53,15 @@ export function useScratchpad(session: UsePeerSessionResult): UseScratchpadResul
   }, [subscribeControl, localPeerId]);
 
   useEffect(() => {
-    if (connectionState === "connected" && entriesRef.current.length > 0) {
-      sendControl({
-        type: "scratchpad:sync",
-        entries: entriesRef.current.map(toWireEntry),
-      });
-    }
-  }, [connectionState, sendControl]);
+    return subscribePeerConnected((peerId) => {
+      if (entriesRef.current.length > 0) {
+        sendControlToPeer(peerId, {
+          type: "scratchpad:sync",
+          entries: entriesRef.current.map(toWireEntry),
+        });
+      }
+    });
+  }, [sendControlToPeer, subscribePeerConnected]);
 
   const sendEntry = useCallback(
     (rawText: string): boolean => {
@@ -63,21 +71,21 @@ export function useScratchpad(session: UsePeerSessionResult): UseScratchpadResul
       const entry = createScratchpadEntry(trimmed, localPeerId, localLabel);
       setLastClearedBy(null);
       setEntries((prev) => [...prev, entry]);
-      sendControl({ type: "scratchpad:entry", entry: toWireEntry(entry) });
+      broadcastControl({ type: "scratchpad:entry", entry: toWireEntry(entry) });
       return true;
     },
-    [localPeerId, localLabel, sendControl]
+    [broadcastControl, localPeerId, localLabel]
   );
 
   const clearSession = useCallback(() => {
     setEntries([]);
     setLastClearedBy(localLabel);
-    sendControl({
+    broadcastControl({
       type: "scratchpad:clear",
       timestamp: Date.now(),
       senderLabel: localLabel,
     });
-  }, [localLabel, sendControl]);
+  }, [broadcastControl, localLabel]);
 
   return {
     entries,

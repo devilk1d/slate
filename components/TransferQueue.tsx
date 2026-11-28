@@ -230,6 +230,9 @@ export function TransferQueue({
                       </div>
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] font-mono tabular-nums text-[#525252]">
                         <span>
+                          {item.direction === "outgoing" ? "To" : "From"} {item.peerLabel}
+                        </span>
+                        <span>
                           {formatBytes(item.transferredBytes)} / {formatBytes(item.size)}
                         </span>
                         {item.status === "transferring" && (
